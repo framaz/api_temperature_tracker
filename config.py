@@ -21,8 +21,8 @@ class ConfigReader:
 
     @lru_cache
     def _read_config(self) -> Config:
-        with open('config.json', mode='r') as file:
-            config = json.load(file)
+        with open('config.json', mode='r', encoding="utf-8") as file:
+            config = json.loads(file.read(), )
         return config
 
     @property
