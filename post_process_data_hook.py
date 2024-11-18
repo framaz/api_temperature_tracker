@@ -2,13 +2,15 @@ import datetime
 import glob
 import json
 import os
+from collections import defaultdict
 from threading import Thread
 from time import sleep
-from typing import List
+from typing import List, Optional
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
 
+from config import ConfigReader
 from devices_data import DeviceData
 
 
@@ -73,40 +75,68 @@ class ExportCsvHook(BaseHook):
 
 class MathPlotLibHook(BaseHook):
     def __init__(self):
-        with open('config.json', mode='r') as file:
-            config = json.load(file)
+        self._config = ConfigReader()
 
-        self.item_id_to_log = config['device_id']
-        self.param_to_log = config['param_name']
-
-        self.times = []
-        self.values = []
+        self.times_by_device_ids = defaultdict(lambda: [])
+        self.values_by_device_ids = defaultdict(lambda: [])
+        self.names = {}
+        colors_iterator = self.colors_iter()
+        self.colors = defaultdict(lambda: next(colors_iterator))
 
         self.thread = Thread(target=self.update_plot_in_thread)
         self.thread.start()
 
+    def colors_iter(self):
+        colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
+        while True:
+            yield from colors
+
     def apply(self, devices_data: List[DeviceData]):
-        device_data = self.get_device_by_id(devices_data, self.item_id_to_log)
+        for device in self._config.devices:
+            device_id = device["device_id"]
+            device_data = self.get_device_by_id(devices_data, device_id)
 
-        self.times.append(device_data.time)
+            self.times_by_device_ids[device_id].append(device_data.time)
 
-        status_dict = self.status_list_to_status_dict(device_data.status)
-        self.values.append(status_dict[self.param_to_log])
+            status_dict = self.status_list_to_status_dict(device_data.status)
+            self.values_by_device_ids[device_id].append(status_dict[device['param_name']])
+
+            self.names[device_id] = device_data.name
 
     def update_plot_in_thread(self, ):
-        y_lim = [50, 600]
-        plt.ylim(y_lim)
-        plt.yticks(range(*y_lim, 10), alpha=0.5)
-        plt.show(block=False)
-        plt.grid(True)
-        my_fmt = mdates.DateFormatter('%H:%M')
-        plt.gca().xaxis.set_major_formatter(my_fmt)
         while (True):
-            min_time = min(self.times or [datetime.datetime.now()])
-            max_time = max(self.times or [min_time])
+            plt.clf()
+            y_lim = [50, 600]
+            plt.ylim(y_lim)
+            plt.yticks(range(*y_lim, 10), alpha=0.5)
+            plt.show(block=False)
+            plt.grid(True)
+            my_fmt = mdates.DateFormatter('%H:%M')
+            plt.gca().xaxis.set_major_formatter(my_fmt)
+
+
+            min_time = self._get_min()
+            max_time = self._get_max()
             times = np.arange(min_time, max_time, datetime.timedelta(seconds=30*60)).astype(datetime.datetime)
 
             plt.xticks(times, rotation=90)
-            plt.plot(self.times, self.values, color='black', )
-            # sleep(0.5)
+
+            for device_id, times in self.times_by_device_ids.items():
+                values = self.values_by_device_ids[device_id]
+                label = self.names.get(device_id, device_id)
+                plt.plot(times, values, label=label, color=self.colors[device_id])
+
+            plt.legend(loc='best')
             plt.pause(1)
+
+    def _get_min(self) -> Optional[datetime.datetime]:
+        values = [time_arr[0] for time_arr in self.times_by_device_ids.values() if time_arr]
+        if not values:
+            return datetime.datetime.now()
+        return min(values)
+
+    def _get_max(self) -> Optional[datetime.datetime]:
+        values = [time_arr[-1] for time_arr in self.times_by_device_ids.values() if time_arr]
+        if not values:
+            return datetime.datetime.now()
+        return min(values)

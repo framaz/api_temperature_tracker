@@ -5,6 +5,7 @@ import os
 import datetime
 import glob
 
+from config import ConfigReader
 from devices_data import DeviceData
 from post_process_data_hook import ExportCsvHook, MathPlotLibHook
 from tuya_request import TuyaRequestor
@@ -14,18 +15,16 @@ class DataCollector:
     hooks = [ExportCsvHook(), MathPlotLibHook()]
 
     def __init__(self):
-        with open('config.json', mode='r') as file:
-            config = json.load(file)
-        self.requestor = TuyaRequestor(config['apiKey'], config['secretKey'])
-        self.period = config['period_ms'] / 1000
-        self.device_id = config['device_id']
+        config = ConfigReader()
+        self.requestor = TuyaRequestor(config.api_key, config.secret_key)
+        self.period = config.period_ms / 1000
 
     def log_error(self, error_str):
         with open('error.log', mode='a') as file:
             file.write(error_str + '\n')
 
     def get_uid(self):
-        response = self.requestor.tuya_request(f'v1.0/devices/{self.device_id}')
+        response = self.requestor.tuya_request(f'v1.0/devices/{ConfigReader().devices[0]["device_id"]}')
         if not response['success']:
             raise Exception(response)
         return response['result']['uid']
