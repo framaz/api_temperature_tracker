@@ -3,6 +3,7 @@ import glob
 import json
 import os
 from collections import defaultdict
+from dataclasses import dataclass
 from threading import Thread
 from time import sleep
 from typing import List, Optional
@@ -73,12 +74,16 @@ class ExportCsvHook(BaseHook):
         return os.path.join(self._get_or_create_dir_path(device_data), f'{device_data.time.date()}.csv')
 
 
+@dataclass
+class TimeAndValue:
+    time: datetime
+    value: float
+
 class MathPlotLibHook(BaseHook):
     def __init__(self):
         self._config = ConfigReader()
 
-        self.times_by_device_ids = defaultdict(lambda: [])
-        self.values_by_device_ids = defaultdict(lambda: [])
+        self.times_and_values_by_device_ids: dict[str, list[TimeAndValue]] = defaultdict(lambda: [])
         self.names = {}
         colors_iterator = self.colors_iter()
         self.colors = defaultdict(lambda: next(colors_iterator))
@@ -96,10 +101,14 @@ class MathPlotLibHook(BaseHook):
             device_id = device["device_id"]
             device_data = self.get_device_by_id(devices_data, device_id)
 
-            self.times_by_device_ids[device_id].append(device_data.time)
-
             status_dict = self.status_list_to_status_dict(device_data.status)
-            self.values_by_device_ids[device_id].append(status_dict[device['param_name']])
+            
+            result = TimeAndValue(
+                device_data.time,
+                status_dict[device['param_name']],
+            )
+
+            self.times_and_values_by_device_ids[device_id].append(result)
 
             self.names[device_id] = device_data.name
 
@@ -117,12 +126,16 @@ class MathPlotLibHook(BaseHook):
 
             min_time = self._get_min()
             max_time = self._get_max()
-            times = np.arange(min_time, max_time, datetime.timedelta(seconds=30*60)).astype(datetime.datetime)
+            times_scale = np.arange(min_time, max_time, datetime.timedelta(seconds=30*60)).astype(datetime.datetime)
 
-            plt.xticks(times, rotation=90)
+            plt.xticks(times_scale, rotation=90)
 
-            for device_id, times in self.times_by_device_ids.items():
-                values = self.values_by_device_ids[device_id]
+            for device_id, times_and_values in self.times_and_values_by_device_ids.items():
+                # чтобы не было гонки
+                times_and_values = [*times_and_values]
+                
+                values = [obj.value for obj in times_and_values]
+                times = [obj.time for obj in times_and_values]
                 label = self.names.get(device_id, device_id)
                 plt.plot(times, values, label=label, color=self.colors[device_id])
 
@@ -130,13 +143,13 @@ class MathPlotLibHook(BaseHook):
             plt.pause(1)
 
     def _get_min(self) -> Optional[datetime.datetime]:
-        values = [time_arr[0] for time_arr in self.times_by_device_ids.values() if time_arr]
+        values = [time_arr[0].time for time_arr in self.times_and_values_by_device_ids.values() if time_arr]
         if not values:
             return datetime.datetime.now()
         return min(values)
 
     def _get_max(self) -> Optional[datetime.datetime]:
-        values = [time_arr[-1] for time_arr in self.times_by_device_ids.values() if time_arr]
+        values = [time_arr[-1].time for time_arr in self.times_and_values_by_device_ids.values() if time_arr]
         if not values:
             return datetime.datetime.now()
         return min(values)
